@@ -101,6 +101,16 @@ CREATE TABLE IF NOT EXISTS notes (
   created_at TIMESTAMP DEFAULT now()
 );
 
+-- Add columns to notes table for shipping information
+ALTER TABLE notes
+  ADD COLUMN is_shippable BOOLEAN DEFAULT FALSE,
+  ADD COLUMN recipient_name TEXT,
+  ADD COLUMN recipient_address_line1 TEXT,
+  ADD COLUMN recipient_address_line2 TEXT,
+  ADD COLUMN recipient_city TEXT,
+  ADD COLUMN recipient_postal_code TEXT,
+  ADD COLUMN recipient_country TEXT;
+
 -- Enable Row Level Security on notes
 ALTER TABLE notes ENABLE ROW LEVEL SECURITY;
 
@@ -127,6 +137,67 @@ CREATE POLICY user_delete_notes ON notes
     user_id = current_setting('request.jwt.claim.user_id', true)::uuid
   );
 
+-- Create shipments table
+CREATE TABLE IF NOT EXISTS shipments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  note_id UUID NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, -- Sender of the note
+  carrier TEXT NOT NULL, -- e.g., 'ups', 'royal_mail'
+  carrier_shipment_id TEXT, -- ID from the carrier's system
+  tracking_number TEXT,
+  label_image_url TEXT, -- URL to a printable label image
+  label_data TEXT,      -- Base64 encoded label data (e.g., ZPL, PDF)
+  status TEXT NOT NULL DEFAULT 'pending_creation', -- e.g., 'pending_creation', 'created', 'in_transit', 'delivered', 'error', 'cancelled'
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+);
+
+-- Function to update updated_at timestamp
+CREATE OR REPLACE FUNCTION trigger_set_timestamp()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger to update updated_at on shipments table
+CREATE TRIGGER set_shipments_updated_at
+BEFORE UPDATE ON shipments
+FOR EACH ROW
+EXECUTE FUNCTION trigger_set_timestamp();
+
+-- Enable Row Level Security on shipments
+ALTER TABLE shipments ENABLE ROW LEVEL SECURITY;
+
+-- Define RLS policies for shipments table
+-- Users can see their own shipments
+CREATE POLICY user_select_shipments ON shipments
+  FOR SELECT USING (
+    user_id = current_setting('request.jwt.claim.user_id', true)::uuid
+  );
+
+-- Users can create shipments for their own notes
+-- (Further checks might be needed in the microservice, e.g., ensuring the note is shippable)
+CREATE POLICY user_insert_shipments ON shipments
+  FOR INSERT WITH CHECK (
+    user_id = current_setting('request.jwt.claim.user_id', true)::uuid AND
+    EXISTS (SELECT 1 FROM notes n WHERE n.id = note_id AND n.user_id = current_setting('request.jwt.claim.user_id', true)::uuid)
+  );
+
+-- Users can update their own shipments (e.g., microservice might update status)
+CREATE POLICY user_update_shipments ON shipments
+  FOR UPDATE USING (
+    user_id = current_setting('request.jwt.claim.user_id', true)::uuid
+  ) WITH CHECK (
+    user_id = current_setting('request.jwt.claim.user_id', true)::uuid
+  );
+
+-- Users cannot delete shipments directly through PostgREST for now (can be handled by microservice if needed, e.g. cancellation)
+CREATE POLICY user_delete_shipments ON shipments
+  FOR DELETE USING (false);
+
+
 -- Create roles for PostgREST
 DO $$
 BEGIN
@@ -144,10 +215,9 @@ END $$;
 
 GRANT web_anon TO authenticator;
 
--- Grant select/insert/update/delete on notes to web_anon role
+-- Grant permissions to web_anon role
 GRANT SELECT, INSERT, UPDATE, DELETE ON notes TO web_anon;
-
--- Grant select on users (if needed)
+GRANT SELECT, INSERT, UPDATE ON shipments TO web_anon; -- No delete for now
 GRANT SELECT ON users TO web_anon;
 
 -- Set JWT secret for your database (replace with a strong secret)

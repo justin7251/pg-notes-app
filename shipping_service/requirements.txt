@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+httpx
+pydantic
+psycopg2-binary
+python-jose[cryptography]
+tenacity
+sqlalchemy # For database interaction (optional, but good practice over raw psycopg2 for complex queries)

@@ -26,5 +26,23 @@ services:
       PGRST_DB_SCHEMA: public
       PGRST_OPENAPI_SERVER_PROXY_URI: http://localhost:3000
 
+  shipping_service:
+    build: ./shipping_service
+    container_name: shipping-service-api
+    depends_on:
+      - db
+    ports:
+      - "8001:8000" # Expose container port 8000 (uvicorn default) to host port 8001
+    environment:
+      DATABASE_URL: "postgresql://admin:secret@db:5432/notes"
+      JWT_SECRET: "your-very-secret-jwt-key" # Same as in init.sql and postgrest.conf
+      UPS_CLIENT_ID: "YOUR_UPS_CLIENT_ID"
+      UPS_CLIENT_SECRET: "YOUR_UPS_CLIENT_SECRET"
+      UPS_API_BASE_URL: "https://wwwcie.ups.com/api" # UPS sandbox URL, replace if using production
+      UPS_SHIPPER_NUMBER: "YOUR_UPS_SHIPPER_ACCOUNT_NUMBER" # Add your UPS shipper number here
+      PORT: 8000
+    volumes:
+      - ./shipping_service:/app # Mount for live reload during development
+
 volumes:
   pgdata:
